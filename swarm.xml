@@ -1,0 +1,332 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE nta PUBLIC '-//Uppaal Team//DTD Flat System 1.1//EN' 'http://www.it.uu.se/research/group/darts/uppaal/flat-1_2.dtd'>
+<nta>
+	<declaration>// Place global declarations here.
+const double M_PI       = 3.141592653589793115997963468544185161590576171875;      // pi
+const double M_PI_2     = 1.5707963267948965579989817342720925807952880859375;     // pi/2
+const double TWO_M_PI = 2.0 * M_PI;                                                // 2 * pi
+
+const double grid = sqrt(10.0);
+const double goal[2] = {100.0, 100.0};
+
+const int N = 10;              // number of agents
+const double cb = 144.0;
+const double rb[2][2] = {{96.0, 96.0}, {96.0, 108.0}};
+const double ra[2] = {0.0, M_PI_2};
+const double kc[2][2] = {{0.15, 0.15}, {0.15, 0.15}};
+const double kr[2][2] = {{150.0, 50.0}, {150.0, 50.0}};
+const double kd[2] = {0.15, 0.15};
+const double ka[2] = {0.0, 5.0};
+const double kg = 200.0;
+const double speed = 0.05;
+
+typedef int[0, N-1] id_t;
+
+double x_pos[N];
+double y_pos[N];
+bool prm[N] = {0,0,0,0,0,0,0,0,0,0};
+
+
+int init_agent_pos(double &amp;x[N], double &amp;y[N]) {
+    for (i : id_t) {
+        x[i] = random(grid);
+        y[i] = random(grid);
+    }
+    return 0;
+}
+
+double  distance(id_t i, id_t j) {
+    return hypot(x_pos[i] - x_pos[j], y_pos[i] - y_pos[j]);
+}
+
+int angles(id_t i, bool &amp;n[N], double &amp;v_nbrs[N][2], double &amp;ang[N]) {
+    for (j : id_t) {
+        ang[j] = n[j] ? atan2(-v_nbrs[j][1], -v_nbrs[j][0]) : 0.0;
+    }
+    return 0;
+}
+
+int sort(double &amp;data[N], int &amp;idx[N], bool &amp;n[N]) {
+    int i, j, min, tmp;
+
+    for (i : id_t) {
+        idx[i] = i;
+    }
+    for (j = 0; j &lt; N - 1; j++) {
+        if (n[j]) {
+            min = j;
+            for (i = j+1; i &lt; N; i++) {
+                if (n[i]) {
+                    if (data[idx[i]] &lt; data[idx[min]]) {
+                       min = i;
+                    }
+                }
+            }
+            if (min != j) {
+                tmp = idx[j];
+                idx[j] = idx[min];
+                idx[min] = tmp;
+            } 
+        }
+    }
+    return 0;
+}
+
+int count(bool &amp;a[N]) {
+    int result = 0;
+    for (i : id_t) {
+        if (a[i]) {
+            result += 1;
+        }
+    }
+    return result;
+}
+
+int observe_environment(id_t i, double &amp;d[N], bool &amp;n[N], double &amp; v_nbrs[N][2], bool &amp;p[N]) {
+    for (j : id_t) {
+        p[j] = prm[j];
+        d[j] = distance(i, j);
+        if (i != j &amp;&amp; d[j] &lt;= cb) {
+            n[j] = true;
+            v_nbrs[j][0] = x_pos[j] - x_pos[i];
+            v_nbrs[j][1] = y_pos[j] - y_pos[i];
+        }
+        else {
+            n[j] = false;
+            v_nbrs[j][0] = v_nbrs[j][1] = 0.0;
+        }
+    }
+    return 0;
+}
+
+bool  compute_perimeter_status(id_t i, bool &amp;n[N], double &amp;v_nbrs[N][2], double &amp; ang[N], int &amp;idx[N], double &amp; v_gap[2]) {
+    prm[i] = false;
+    if (count(n) &lt; 3) {
+        prm[i] = true;
+    }
+    else {
+        angles(i, n, v_nbrs, ang);
+        sort(ang, idx, n);
+        for (j : id_t) {
+            if (n[j]) {
+                int k = (j + 1) % N;
+                while (k != j &amp;&amp; !n[k]) {
+                    k = (k + 1) % N;
+                }
+                if (distance(idx[j], idx[k]) &gt; cb) {
+                    prm[i] = true;
+                    v_gap[0] = kg * (0.5 * (x_pos[idx[j]] + x_pos[idx[k]]) - x_pos[i]); 
+                    v_gap[1] = kg * (0.5 * (y_pos[idx[j]] + y_pos[idx[k]]) - y_pos[i]);
+                    return prm[i];
+                }
+                else {
+                    double d = ang[idx[k]] - ang[idx[j]];
+                    if (d &lt; 0.0) {
+                        d = d + TWO_M_PI;
+                    }
+                    if (d &gt; M_PI) {
+                        prm[i] = true;
+                        v_gap[0] = kg * (0.5 * (x_pos[idx[j]] + x_pos[idx[k]]) - x_pos[i]); 
+                        v_gap[1] = kg * (0.5 * (y_pos[idx[j]] + y_pos[idx[k]]) - y_pos[i]);
+                        return prm[i];
+                    }
+                }
+            }      
+        }
+    }
+    return prm[i];
+}
+
+int compute_cohesion(id_t i, bool &amp;n[N], double &amp;v_nbrs[N][2], bool &amp;p[N], double &amp;v_coh[2]) {
+    int count = 0;
+    v_coh[0] = v_coh[1] = 0.0;
+    for (j : id_t) {
+        if (n[j]) {
+            count += 1;
+            v_coh[0] = v_coh[0] + kc[p[i]][p[j]] * v_nbrs[j][0];
+            v_coh[1] = v_coh[1] + kc[p[i]][p[j]] * v_nbrs[j][1];
+        }
+    }
+    if (count &gt; 0) {
+        v_coh[0] = v_coh[0] / count;
+        v_coh[1] = v_coh[1] / count;
+    }
+    return 0;
+}
+
+int compute_repulsion(id_t i, bool &amp;n[N], double &amp;v_nbrs[N][2], bool &amp;p[N], double &amp;v_rep[2]) {
+    int count = 0;
+    v_rep[0] = v_rep[1] = 0.0;
+    for (j : id_t) {
+        if (n[j]) {
+            double mag_ij = distance(i, j);
+            if (mag_ij &lt;= rb[p[i]][p[j]]) {
+                count += 1;
+                v_rep[0] = v_rep[0] + kr[p[i]][p[j]] * (1.0 - (rb[p[i]][p[j]] / mag_ij)) * v_nbrs[j][0];
+                v_rep[1] = v_rep[1] + kr[p[i]][p[j]] * (1.0 - (rb[p[i]][p[j]] / mag_ij)) * v_nbrs[j][1];
+            }
+        }
+    }  
+    if (count &gt; 0) {
+        v_rep[0] = v_rep[0] / count;
+        v_rep[1] = v_rep[1] / count;
+    }
+    return 0;
+}
+
+int compute_direction(id_t i, bool p, double &amp;v_dir[2]) {
+    v_dir[0] = kd[p] * (goal[0] - x_pos[i]);
+    v_dir[1] = kd[p] * (goal[1] - y_pos[i]);
+    return 0;
+}
+
+int compute_rotation(id_t i, bool p, double &amp;v_dir[2], double &amp;v_rot[2]) {
+    if ((ka[p] == 0.0) || (ra[p] == 0.0) || ((v_dir[0] == 0.0) &amp;&amp; (v_dir[1] == 0.0))) {
+        v_rot[0] = v_rot[1] = 0.0;
+    }
+    else {
+        double ndx;
+        double ndy;
+        double mag_dir;
+        mag_dir = hypot(v_dir[0], v_dir[1]);
+        ndx = v_dir[0] / mag_dir;
+        ndy = v_dir[1] / mag_dir;
+        v_rot[0] = ka[p] * (cos(ra[p]) * ndx - sin(ra[p]) * ndy);
+        v_rot[1] = ka[p] * (sin(ra[p]) * ndx + cos(ra[p]) * ndy);
+    }
+    return 0;
+}
+
+</declaration>
+	<template>
+		<name x="5" y="5">Agent</name>
+		<parameter>const id_t id</parameter>
+		<declaration>// Place local declarations here.
+bool nbrs[N];
+double distances[N];
+double angles[N];
+int idx[N] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
+bool prm[N];
+clock t;
+double v_nbrs[N][2];
+double v_gap[2];
+double v_coh[2];
+double v_rep[2];
+double v_dir[2];
+double v_rot[2];
+
+
+int move() {
+    double v_res_x;
+    double v_res_y;
+    double mag_res;
+    v_res_x = v_gap[0] + v_coh[0] + v_rep[0] + v_dir[0] + v_rot[0];
+    v_res_y = v_gap[1] + v_coh[1] + v_rep[1] + v_dir[1] + v_rot[1];
+    mag_res = hypot(v_res_x, v_res_y);
+    if (mag_res &gt; 0.0) { 
+        v_res_x = v_res_x / mag_res * speed;
+        v_res_y = v_res_y / mag_res * speed;
+    }
+    else {
+        v_res_x = v_res_y = 0.0;
+    }
+    x_pos[id] = x_pos[id] + v_res_x;
+    y_pos[id] = y_pos[id] + v_res_y;
+
+    return 0;
+}
+</declaration>
+		<location id="id0" x="-136" y="0">
+			<label kind="invariant" x="-146" y="17">t &lt;= 1</label>
+		</location>
+		<location id="id1" x="170" y="0">
+			<label kind="invariant" x="160" y="17">t &lt;= 2</label>
+		</location>
+		<location id="id2" x="612" y="0">
+			<label kind="invariant" x="602" y="17">t &lt;= 10</label>
+		</location>
+		<location id="id3" x="884" y="0">
+			<label kind="invariant" x="874" y="17">t &lt;= 10</label>
+		</location>
+		<init ref="id0"/>
+		<transition>
+			<source ref="id3"/>
+			<target ref="id0"/>
+			<label kind="guard" x="289" y="102">t &gt;= 10</label>
+			<label kind="assignment" x="297" y="144">t = 0</label>
+			<nail x="306" y="136"/>
+		</transition>
+		<transition>
+			<source ref="id2"/>
+			<target ref="id3"/>
+			<label kind="guard" x="714" y="8">t &gt;= 10</label>
+			<label kind="assignment" x="714" y="-34">move()</label>
+		</transition>
+		<transition>
+			<source ref="id1"/>
+			<target ref="id2"/>
+			<label kind="guard" x="323" y="8">t &gt;= 2</label>
+			<label kind="assignment" x="187" y="-119">prm[id] = compute_perimeter_status(id, nbrs, v_nbrs, angles, idx, v_gap),
+compute_cohesion(id, nbrs, v_nbrs, prm, v_coh),
+compute_repulsion(id, nbrs, v_nbrs, prm, v_rep),
+compute_direction(id, prm[id], v_dir),
+compute_rotation(id, prm[id], v_dir, v_rot)</label>
+		</transition>
+		<transition>
+			<source ref="id0"/>
+			<target ref="id1"/>
+			<label kind="guard" x="-42" y="8">t &gt;= 1</label>
+			<label kind="assignment" x="-255" y="-42">observe_environment(id, distances,  nbrs, v_nbrs, prm), t = 0</label>
+		</transition>
+	</template>
+	<template>
+		<name>Environment</name>
+		<location id="id4" x="-374" y="0">
+			<committed/>
+		</location>
+		<location id="id5" x="-102" y="0">
+		</location>
+		<init ref="id4"/>
+		<transition>
+			<source ref="id4"/>
+			<target ref="id5"/>
+			<label kind="assignment" x="-340" y="-25">init_agent_pos(x_pos, y_pos)</label>
+		</transition>
+	</template>
+	<system>// Place template instantiations here.
+S(const id_t id) = Agent(id);
+E = Environment();
+// List one or more processes to be composed into a system.
+system S, E;
+    </system>
+	<queries>
+		<query>
+			<formula>simulate[&lt;=300]{ S(0).v_coh[0], S(0).v_coh[1] }</formula>
+			<comment></comment>
+		</query>
+		<query>
+			<formula>Pr[&lt;=200000]( &lt;&gt; (S(0).prm[0] &amp;&amp; S(1).prm[1] &amp;&amp; S(2).prm[2] &amp;&amp; S(3).prm[3] &amp;&amp; S(4).prm[4] &amp;&amp; S(5).prm[5] &amp;&amp; S(6).prm[6] &amp;&amp; S(7).prm[7] &amp;&amp; S(8).prm[8] &amp;&amp; S(9).prm[9]) )</formula>
+			<comment></comment>
+		</query>
+		<query>
+			<formula>simulate[&lt;=100000]{ S(0).prm[0], S(1).prm[1], S(2).prm[2], S(3).prm[3], S(4).prm[4], S(5).prm[5], S(6).prm[6], S(7).prm[7], S(8).prm[8], S(9).prm[9] }</formula>
+			<comment></comment>
+		</query>
+		<query>
+			<formula>simulate[&lt;=10]{ S(1).angles[S(1).idx[1]], S(1).angles[S(1).idx[2]], S(1).angles[S(1).idx[3]], S(1).angles[S(1).idx[4]], S(1).angles[S(1).idx[5]], S(1).angles[S(1).idx[6]], S(1).angles[S(1).idx[7]], S(1).angles[S(1).idx[8]], S(1).angles[S(1).idx[9]]}</formula>
+			<comment></comment>
+		</query>
+		<query>
+			<formula>simulate[&lt;=10]{ S(0).angles[S(0).idx[1]], S(0).angles[S(0).idx[2]], S(0).angles[S(0).idx[3]], S(0).angles[S(0).idx[4]], S(0).angles[S(0).idx[5]], S(0).angles[S(0).idx[6]], S(0).angles[S(0).idx[7]], S(0).angles[S(0).idx[8]], S(0).angles[S(0).idx[9]]}</formula>
+			<comment></comment>
+		</query>
+		<query>
+			<formula>simulate[&lt;=1000]{ S(0).nbrs[1], S(0).nbrs[2],S(0).nbrs[3], S(0).nbrs[4], S(0).nbrs[5], S(0).nbrs[6], S(0).nbrs[7], S(0).nbrs[8], S(0).nbrs[9] }</formula>
+			<comment></comment>
+		</query>
+		<query>
+			<formula>simulate[&lt;=200000]{ S(0).distances[0], S(0).distances[1], S(0).distances[2], S(0).distances[3], S(0).distances[4], S(0).distances[5], S(0).distances[6], S(0).distances[7], S(0).distances[8], S(0).distances[9] }</formula>
+			<comment></comment>
+		</query>
+	</queries>
+</nta>
